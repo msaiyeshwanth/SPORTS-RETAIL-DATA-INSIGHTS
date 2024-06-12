@@ -1,10 +1,12 @@
 # SPORTS-RETAIL-DATA-INSIGHTS
-# Calculate R-squared
-actual <- dt$y
-predicted <- dt$predicted
-mean_actual <- mean(actual)
-ss_total <- sum((actual - mean_actual)^2)
-ss_residual <- sum((actual - predicted)^2)
-rsquared <- 1 - (ss_residual / ss_total)
+# Predicted values
+ridge_pred <- predict(ridge_model, x)
+lasso_pred <- predict(lasso_model, x)
 
-print(paste("R-squared:", round(rsquared, 3)))
+# Calculate R-squared
+ridge_r2 <- 1 - sum((y - ridge_pred)^2) / sum((y - mean(y))^2)
+lasso_r2 <- 1 - sum((y - lasso_pred)^2) / sum((y - mean(y))^2)
+
+# Print R-squared values
+print(paste("Ridge R-squared:", ridge_r2))
+print(paste("Lasso R-squared:", lasso_r2))
