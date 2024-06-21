@@ -1,16 +1,21 @@
 # SPORTS-RETAIL-DATA-INSIGHTS
 
-# Create a 4-row subplot figure
-fig = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.02)
+# Function to identify outliers using the IQR method
+def identify_outliers(df, column):
+    Q1 = df[column].quantile(0.25)
+    Q3 = df[column].quantile(0.75)
+    IQR = Q3 - Q1
+    lower_bound = Q1 - 1.5 * IQR
+    upper_bound = Q3 + 1.5 * IQR
+    return (df[column] < lower_bound) | (df[column] > upper_bound)
 
-# Add line plots for each column
-fig.add_trace(go.Scatter(x=df.index, y=df['col1'], mode='lines', name='Column 1'), row=1, col=1)
-fig.add_trace(go.Scatter(x=df.index, y=df['col2'], mode='lines', name='Column 2'), row=2, col=1)
-fig.add_trace(go.Scatter(x=df.index, y=df['col3'], mode='lines', name='Column 3'), row=3, col=1)
-fig.add_trace(go.Scatter(x=df.index, y=df['col4'], mode='lines', name='Column 4'), row=4, col=1)
+# Identify outliers in the specified column
+outliers = identify_outliers(df, 'column_name')
 
-# Update layout
-fig.update_layout(height=800, width=800, title_text="Comparison of Four Columns")
+# Replace outliers with NaN
+df.loc[outliers, 'column_name'] = np.nan
 
-# Show the plot
-fig.show()
+# Interpolate NaN values linearly
+df['column_name'] = df['column_name'].interpolate(method='linear')
+
+print(df)
