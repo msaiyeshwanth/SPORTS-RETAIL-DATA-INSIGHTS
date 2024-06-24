@@ -1,21 +1,43 @@
 # SPORTS-RETAIL-DATA-INSIGHTS
 
-# Function to identify outliers using the IQR method
-def identify_outliers(df, column):
-    Q1 = df[column].quantile(0.25)
-    Q3 = df[column].quantile(0.75)
-    IQR = Q3 - Q1
-    lower_bound = Q1 - 1.5 * IQR
-    upper_bound = Q3 + 1.5 * IQR
-    return (df[column] < lower_bound) | (df[column] > upper_bound)
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense, Dropout, Bidirectional
+from tensorflow.keras.callbacks import EarlyStopping
 
-# Identify outliers in the specified column
-outliers = identify_outliers(df, 'column_name')
+# Define the sequence length (e.g., 1440 for one day of data)
+sequence_length = 1440
 
-# Replace outliers with NaN
-df.loc[outliers, 'column_name'] = np.nan
+# Create the model
+model = Sequential()
+model.add(Bidirectional(LSTM(100, return_sequences=True), input_shape=(sequence_length, 32)))
+model.add(Dropout(0.2))
+model.add(Bidirectional(LSTM(50, return_sequences=True)))
+model.add(Dropout(0.2))
+model.add(Bidirectional(LSTM(50)))
+model.add(Dense(1))
+model.compile(optimizer='adam', loss='mse')
 
-# Interpolate NaN values linearly
-df['column_name'] = df['column_name'].interpolate(method='linear')
+# EarlyStopping callback
+early_stopping = EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True)
 
-print(df)
+# Train the model
+history = model.fit(
+    X_train, y_train,
+    epochs=100,
+    batch_size=64,
+    validation_data=(X_val, y_val),
+    callbacks=[early_stopping]
+)
+
+
+
+import matplotlib.pyplot as plt
+
+plt.figure(figsize=(10, 6))
+plt.plot(history.history['loss'], label='Training Loss')
+plt.plot(history.history['val_loss'], label='Validation Loss')
+plt.xlabel('Epochs')
+plt.ylabel('Loss')
+plt.title('Training and Validation Loss')
+plt.legend()
+plt.show()
