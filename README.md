@@ -41,3 +41,34 @@ plt.ylabel('Loss')
 plt.title('Training and Validation Loss')
 plt.legend()
 plt.show()
+
+
+
+
+
+
+
+
+
+
+
+# Reshape X_test for SHAP
+num_samples = X_val.shape[0]
+sequence_length = X_val.shape[1]
+num_features = X_val.shape[2]
+
+X_val_reshaped = X_val.reshape(num_samples, sequence_length * num_features)
+
+# Define prediction function for SHAP
+def model_predict(data):
+    data_reshaped = data.reshape(data.shape[0], sequence_length, num_features)
+    return model.predict(data_reshaped)
+
+# Create SHAP explainer
+explainer = shap.KernelExplainer(model_predict, X_val_reshaped[:100])
+
+# Compute SHAP values
+shap_values = explainer.shap_values(X_val_reshaped[:100], nsamples=100)
+
+# Visualize SHAP values
+shap.summary_plot(shap_values, features=X_val_reshaped[:100], feature_names=[f'feature_{i}' for i in range(sequence_length * num_features)])
