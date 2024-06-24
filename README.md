@@ -52,23 +52,18 @@ plt.show()
 
 
 
-# Reshape X_test for SHAP
-num_samples = X_val.shape[0]
-sequence_length = X_val.shape[1]
-num_features = X_val.shape[2]
+import lime
+import lime.lime_tabular
 
-X_val_reshaped = X_val.reshape(num_samples, sequence_length * num_features)
+# Initialize the LIME explainer
+explainer = lime.lime_tabular.LimeTabularExplainer(
+    X_val.reshape(X_val.shape[0], -1),
+    feature_names=[f'feature_{i}' for i in range(X_val_flat.shape[1])],
+    class_names=['target'],
+    verbose=True,
+    mode='regression'
+)
 
-# Define prediction function for SHAP
-def model_predict(data):
-    data_reshaped = data.reshape(data.shape[0], sequence_length, num_features)
-    return model.predict(data_reshaped)
-
-# Create SHAP explainer
-explainer = shap.KernelExplainer(model_predict, X_val_reshaped[:100])
-
-# Compute SHAP values
-shap_values = explainer.shap_values(X_val_reshaped[:100], nsamples=100)
-
-# Visualize SHAP values
-shap.summary_plot(shap_values, features=X_val_reshaped[:100], feature_names=[f'feature_{i}' for i in range(sequence_length * num_features)])
+# Explain the first instance in the validation set
+exp = explainer.explain_instance(X_val_flat[0], model_predict, num_features=10)
+exp.show_in_notebook(show_table=True)
