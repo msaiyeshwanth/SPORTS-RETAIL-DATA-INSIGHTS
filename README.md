@@ -1,8 +1,8 @@
 # SPORTS-RETAIL-DATA-INSIGHTS
 
-plot_ly(data = df, x = ~indices) %>%
-  add_lines(y = ~actual, name = 'Actual', line = list(color = 'blue')) %>%
-  add_lines(y = ~predicted, name = 'Predicted', line = list(color = 'red', dash = 'dash')) %>%
-  layout(title = 'Actual vs Predicted',
-         xaxis = list(title = 'Index'),
-         yaxis = list(title = 'Values'))
+ggplot(df, aes(x = indices)) +
+  geom_line(aes(y = actual, color = "Actual"), size = 1) +
+  geom_line(aes(y = predicted, color = "Predicted"), linetype = "dashed", size = 1) +
+  labs(x = "Index", y = "Values", title = "Actual vs Predicted") +
+  scale_color_manual(values = c("blue", "red")) +
+  theme_minimal()
