@@ -1,33 +1,39 @@
 # SPORTS-RETAIL-DATA-INSIGHTS
 
-# Load the best model
-model.load_weights(checkpoint_filepath)
+# Function to assign shift labels based on hour
+def assign_shift(hour):
+    if 7 <= hour < 19:
+        return 'Day Shift'
+    else:
+        return 'Night Shift'
 
-# Evaluate the model on the test set
-loss, accuracy = model.evaluate(X_test, y_test)
-print(f'Test Loss: {loss}')
-print(f'Test Accuracy: {accuracy}')
+# Create a shift column
+df['shift'] = df.index.hour.map(assign_shift)
 
-# Make predictions
-y_pred_prob = model.predict(X_test)
-y_pred = (y_pred_prob > 0.5).astype("int32")
+# Create a shift_start column to handle shifts that span two days
+df['shift_start'] = df.index.to_period('D') + (df['shift'] == 'Night Shift').astype('timedelta64[D]')
 
-# Reshape y_test and y_pred to be 1D arrays for metric calculations
-y_test_flat = y_test.flatten()
-y_pred_flat = y_pred.flatten()
 
-# Confusion matrix
-cm = confusion_matrix(y_test_flat, y_pred_flat)
-print("Confusion Matrix:")
-print(cm)
+# Group by shift_start and shift
+shift_grouped = df.groupby(['shift_start', 'shift'])
 
-# Other metrics
-accuracy = accuracy_score(y_test_flat, y_pred_flat)
-precision = precision_score(y_test_flat, y_pred_flat)
-recall = recall_score(y_test_flat, y_pred_flat)
-f1 = f1_score(y_test_flat, y_pred_flat)
+# Aggregate data by shift (e.g., mean, sum, max, min)
+shift_aggregated = shift_grouped['value'].agg(['mean', 'sum', 'max', 'min']).reset_index()
 
-print(f"Accuracy: {accuracy}")
-print(f"Precision: {precision}")
-print(f"Recall: {recall}")
-print(f"F1 Score: {f1}")
+
+
+
+
+# Function to format timestamps
+def format_timestamp(row):
+    shift_start = row['shift_start'].strftime('%Y %m %d')
+    shift_time = '07 0000' if row['shift'] == 'Day Shift' else '19 0000'
+    return f"{shift_start} {shift_time}"
+
+# Apply the function to format timestamps
+shift_aggregated['formatted_timestamp'] = shift_aggregated.apply(format_timestamp, axis=1)
+
+# Reorder columns to have the formatted timestamp first
+shift_aggregated = shift_aggregated[['formatted_timestamp', 'mean', 'sum', 'max', 'min']]
+
+print(shift_aggregated.head(10))
