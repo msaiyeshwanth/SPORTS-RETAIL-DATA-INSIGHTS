@@ -1,39 +1,42 @@
 # SPORTS-RETAIL-DATA-INSIGHTS
 
-# Function to assign shift labels based on hour
-def assign_shift(hour):
-    if 7 <= hour < 19:
-        return 'Day Shift'
-    else:
-        return 'Night Shift'
+import pandas as pd
+import numpy as np
 
-# Create a shift column
-df['shift'] = df.index.hour.map(assign_shift)
+# Example: Creating a DataFrame with hourly data for 5 months and 15 feature columns
+date_rng = pd.date_range(start='2024-01-01 00:00', end='2024-06-01 23:00', freq='H')
+data = np.random.randn(len(date_rng), 15) * 10 + 100  # Replace with your actual data
+columns = [f'feature_{i}' for i in range(1, 16)]
+df = pd.DataFrame(data, index=date_rng, columns=columns)
 
-# Create a shift_start column to handle shifts that span two days
-df['shift_start'] = df.index.to_period('D') + (df['shift'] == 'Night Shift').astype('timedelta64[D]')
+# Step 1: Filter data to include only from 7 AM on January 1st to 7 PM on May 30th
+df = df[(df.index >= '2024-01-01 07:00') & (df.index <= '2024-05-30 19:00')]
 
+print(df.head())
+print(df.tail())
 
-# Group by shift_start and shift
-shift_grouped = df.groupby(['shift_start', 'shift'])
+# Step 2: Compute the mean for every 12-hour period
+# We will use a rolling window approach for this
+window_size = 12  # 12-hour periods
+df['mean'] = df.rolling(window=window_size).mean()
 
-# Aggregate data by shift (e.g., mean, sum, max, min)
-shift_aggregated = shift_grouped['value'].agg(['mean', 'sum', 'max', 'min']).reset_index()
+# Drop rows with NaN values from the initial period
+df = df.dropna()
 
+# We will now aggregate every 12-hour period's means into a new DataFrame
+# Extracting the 12-hour period means
+df_aggregated = df.groupby(df.index.date).mean()
 
+# Create a new DataFrame with aggregated data
+df_final = df_aggregated.copy()
 
+# Format Timestamps for the new DataFrame
+def format_timestamp(date):
+    return f"{date.strftime('%Y %m %d')} 07 0000"
 
+df_final['formatted_timestamp'] = df_final.index.to_series().apply(format_timestamp)
 
-# Function to format timestamps
-def format_timestamp(row):
-    shift_start = row['shift_start'].strftime('%Y %m %d')
-    shift_time = '07 0000' if row['shift'] == 'Day Shift' else '19 0000'
-    return f"{shift_start} {shift_time}"
+# Reset index to make formatted timestamp a column
+df_final.reset_index(drop=True, inplace=True)
 
-# Apply the function to format timestamps
-shift_aggregated['formatted_timestamp'] = shift_aggregated.apply(format_timestamp, axis=1)
-
-# Reorder columns to have the formatted timestamp first
-shift_aggregated = shift_aggregated[['formatted_timestamp', 'mean', 'sum', 'max', 'min']]
-
-print(shift_aggregated.head(10))
+print(df_final.head(10))
