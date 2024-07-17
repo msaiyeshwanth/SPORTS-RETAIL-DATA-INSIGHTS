@@ -2,62 +2,76 @@
 
 import pandas as pd
 import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+from pytorch_tabnet.tab_model import TabNetRegressor
+import joblib
+import shap
+import matplotlib.pyplot as plt
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
-# Example: Creating a DataFrame with hourly data for 5 months and 15 feature columns
-date_rng = pd.date_range(start='2024-01-01 07:00', end='2024-05-30 19:00', freq='H')
-data = np.random.randn(len(date_rng), 15) * 10 + 100  # Replace with your actual data
-columns = [f'feature_{i}' for i in range(1, 16)]
-df = pd.DataFrame(data, index=date_rng, columns=columns)
+# Load your data into a DataFrame
+data = pd.read_csv('your_shift_data.csv')  # Replace with your actual data file
+features = data.drop(columns=['efficiency'])
+target = data['efficiency']
 
-# Define shift intervals
-def get_shift(timestamp):
-    if 7 <= timestamp.hour < 19:
-        return 'Day Shift'
-    else:
-        return 'Night Shift'
+# Split the data into training, validation, and testing sets
+X_train, X_temp, y_train, y_temp = train_test_split(features, target, test_size=0.3, random_state=42)
+X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=0.5, random_state=42)
 
-# Apply the shift function to the DataFrame
-df['shift'] = df.index.to_series().apply(get_shift)
+# Standardize the features
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_val_scaled = scaler.transform(X_val)
+X_test_scaled = scaler.transform(X_test)
 
-# Add a 'shift_start' column to align the shift periods
-def get_shift_start(timestamp):
-    if timestamp.hour >= 19:
-        # For Night Shift starting from 7 PM, it starts the previous day
-        return timestamp - pd.Timedelta(hours=12)  # Shift back 12 hours
-    else:
-        # For Day Shift starting from 7 AM
-        return timestamp
+# Convert data to numpy arrays
+X_train_scaled = np.array(X_train_scaled)
+X_val_scaled = np.array(X_val_scaled)
+X_test_scaled = np.array(X_test_scaled)
+y_train = np.array(y_train)
+y_val = np.array(y_val)
+y_test = np.array(y_test)
 
-df['shift_start'] = df.index.to_series().apply(get_shift_start)
+# Initialize and train TabNet model
+tabnet = TabNetRegressor()
+tabnet.fit(X_train_scaled, y_train, eval_set=[(X_val_scaled, y_val)], eval_metric=['rmse'])
 
-# Set the new shift start time as the index
-df.set_index('shift_start', inplace=True)
+# Predict and evaluate the model
+y_pred = tabnet.predict(X_test_scaled)
 
-# Group by the new index and shift, then compute the mean for each period
-df_resampled = df.groupby([df.index, 'shift']).mean()
+# Calculate metrics
+mse = mean_squared_error(y_test, y_pred)
+mae = mean_absolute_error(y_test, y_pred)
+r2 = r2_score(y_test, y_pred)
 
-# Unstack to separate day and night shifts
-df_resampled = df_resampled.unstack(level=1)
+print(f"MSE: {mse}")
+print(f"MAE: {mae}")
+print(f"R-squared: {r2}")
 
-# Flatten the multi-level column index
-df_resampled.columns = [f'{col[1]}_{col[0]}' for col in df_resampled.columns]
+# Get feature importance
+feature_importances = tabnet.feature_importances_
 
-# Create formatted timestamps for 7 AM and 7 PM shifts
-def format_timestamp(date, shift):
-    date_str = date.strftime('%Y-%m-%d')
-    if shift == 'Day Shift':
-        time_str = '07:00:00'
-    else:
-        time_str = '19:00:00'
-    return f"{date_str} {time_str}"
+# Plot feature importance
+plt.barh(features.columns, feature_importances)
+plt.xlabel('Feature Importance')
+plt.ylabel('Features')
+plt.title('Feature Importance from TabNet')
+plt.show()
 
-# Apply the function to generate formatted timestamps
-df_resampled['formatted_timestamp'] = df_resampled.index.to_series().apply(lambda x: format_timestamp(x, df.loc[x, 'shift']))
+# Initialize SHAP explainer
+explainer = shap.Explainer(tabnet)
 
-# Reorder columns to have the formatted timestamp first
-df_resampled = df_resampled[['formatted_timestamp'] + [col for col in df_resampled.columns if col != 'formatted_timestamp']]
+# Calculate SHAP values
+shap_values = explainer(X_test_scaled)
 
-# Reset index to make formatted timestamp a column
-df_resampled.reset_index(drop=True, inplace=True)
+# Plot SHAP values
+shap.summary_plot(shap_values, X_test_scaled, feature_names=features.columns)
 
-print(df_resampled.head(10))
+# Save the TabNet model
+tabnet.save_model('tabnet_model')
+
+# Save the SHAP explainer
+joblib.dump(explainer, 'shap_explainer.pkl')
+
+print("Model and SHAP explainer saved successfully.")
