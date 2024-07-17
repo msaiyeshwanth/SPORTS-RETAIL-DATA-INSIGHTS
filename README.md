@@ -19,14 +19,28 @@ def get_shift(timestamp):
 # Apply the shift function to the DataFrame
 df['shift'] = df.index.to_series().apply(get_shift)
 
-# Group by 'shift' and date, then compute the mean
-df_resampled = df.groupby(['shift', df.index.date]).mean()
+# Add a 'shift_start' column to align the shift periods
+def get_shift_start(timestamp):
+    if timestamp.hour >= 19:
+        # For Night Shift starting from 7 PM, it starts the previous day
+        return timestamp - pd.Timedelta(hours=12)  # Shift back 12 hours
+    else:
+        # For Day Shift starting from 7 AM
+        return timestamp
+
+df['shift_start'] = df.index.to_series().apply(get_shift_start)
+
+# Set the new shift start time as the index
+df.set_index('shift_start', inplace=True)
+
+# Group by the new index and shift, then compute the mean for each period
+df_resampled = df.groupby([df.index, 'shift']).mean()
 
 # Unstack to separate day and night shifts
-df_resampled = df_resampled.unstack(level=0)
+df_resampled = df_resampled.unstack(level=1)
 
 # Flatten the multi-level column index
-df_resampled.columns = [f'{col[0]}_{col[1]}' for col in df_resampled.columns]
+df_resampled.columns = [f'{col[1]}_{col[0]}' for col in df_resampled.columns]
 
 # Create formatted timestamps for 7 AM and 7 PM shifts
 def format_timestamp(date, shift):
@@ -38,9 +52,12 @@ def format_timestamp(date, shift):
     return f"{date_str} {time_str}"
 
 # Apply the function to generate formatted timestamps
-df_resampled['formatted_timestamp'] = df_resampled.index.to_series().apply(lambda x: format_timestamp(x[0], x[1]))
+df_resampled['formatted_timestamp'] = df_resampled.index.to_series().apply(lambda x: format_timestamp(x, df.loc[x, 'shift']))
 
 # Reorder columns to have the formatted timestamp first
 df_resampled = df_resampled[['formatted_timestamp'] + [col for col in df_resampled.columns if col != 'formatted_timestamp']]
+
+# Reset index to make formatted timestamp a column
+df_resampled.reset_index(drop=True, inplace=True)
 
 print(df_resampled.head(10))
