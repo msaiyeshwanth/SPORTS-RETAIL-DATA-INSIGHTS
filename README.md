@@ -25,12 +25,18 @@ index2 = 1  # Replace with your second index
 shap_values_instance1 = shap_values[index1]
 shap_values_instance2 = shap_values[index2]
 
-# Create a DataFrame for the SHAP values
+# Add the feature actual values to the DataFrame
 comparison_df = pd.DataFrame({
     'feature': feature_names,
     'shap_value_instance1': shap_values_instance1.values,
-    'shap_value_instance2': shap_values_instance2.values
+    'shap_value_instance2': shap_values_instance2.values,
+    'value_instance1': X_test_df.iloc[index1].values,
+    'value_instance2': X_test_df.iloc[index2].values
 })
+
+# Predict the target values for the selected instances
+pred_instance1 = model.predict(X_test_df.iloc[[index1]])[0]
+pred_instance2 = model.predict(X_test_df.iloc[[index2]])[0]
 
 # Create a bar plot using Plotly
 fig = go.Figure()
@@ -38,16 +44,16 @@ fig = go.Figure()
 fig.add_trace(go.Bar(
     x=comparison_df['feature'],
     y=comparison_df['shap_value_instance1'],
-    name=f'Instance {index1}',
-    text=[f'{val:.4f}' for val in comparison_df['shap_value_instance1']],
+    name=f'Instance {index1} (Pred: {pred_instance1:.4f})',
+    text=[f'{val:.4f} (val: {comparison_df["value_instance1"][i]:.4f})' for i, val in enumerate(comparison_df['shap_value_instance1'])],
     textposition='auto'
 ))
 
 fig.add_trace(go.Bar(
     x=comparison_df['feature'],
     y=comparison_df['shap_value_instance2'],
-    name=f'Instance {index2}',
-    text=[f'{val:.4f}' for val in comparison_df['shap_value_instance2']],
+    name=f'Instance {index2} (Pred: {pred_instance2:.4f})',
+    text=[f'{val:.4f} (val: {comparison_df["value_instance2"][i]:.4f})' for i, val in enumerate(comparison_df['shap_value_instance2'])],
     textposition='auto'
 ))
 
