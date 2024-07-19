@@ -1,17 +1,47 @@
 # SPORTS-RETAIL-DATA-INSIGHTS
 
 
-# Choose an index for the specific test vector to explain
+import pickle
+import shap
+import matplotlib.pyplot as plt
+import xgboost as xgb
+import pandas as pd
+
+# Load the saved XGBoost model
+with open('xgboost_model.pkl', 'rb') as file:
+    model = pickle.load(file)
+
+# Load the saved SHAP explainer
+with open('shap_explainer.pkl', 'rb') as file:
+    explainer = pickle.load(file)
+
+# Load your data (example code)
+# Assuming X_test and y_test are already prepared
+X_test_df = pd.DataFrame(X_test, columns=feature_names)
+
+# Make predictions
+y_pred = model.predict(X_test)
+
+# Plot actual vs predicted
+plt.figure(figsize=(10, 6))
+plt.scatter(y_test, y_pred, alpha=0.3)
+plt.plot([y_test.min(), y_test.max()], [y_test.min(), y_test.max()], 'r--', lw=2)
+plt.xlabel('Actual')
+plt.ylabel('Predicted')
+plt.title('Actual vs Predicted')
+plt.show()
+
+
+
+# Calculate SHAP values for the test set
+shap_values = explainer(X_test_df)
+
+# SHAP summary plot
+shap.summary_plot(shap_values, X_test_df)
+
+# SHAP dependence plot for the first feature
+shap.dependence_plot(0, shap_values.values, X_test_df)
+
+# Explain a specific prediction (e.g., the first test instance)
 instance_index = 0
-
-# Extract the SHAP values and feature values for this instance
-instance_shap_values = shap_values_array[instance_index]
-instance_features = X_test_df.iloc[instance_index]
-
-# Force plot
-shap.force_plot(explainer.expected_value, instance_shap_values, instance_features, feature_names=feature_names, matplotlib=True)
-plt.show()
-
-# Waterfall plot (more detailed view)
-shap.waterfall_plot(shap.Explanation(values=instance_shap_values, base_values=explainer.expected_value, data=instance_features, feature_names=feature_names))
-plt.show()
+shap.waterfall_plot(shap_values[instance_index])
