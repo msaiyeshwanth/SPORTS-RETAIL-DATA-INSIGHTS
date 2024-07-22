@@ -283,3 +283,52 @@ shap_values = explainer.shap_values(test_data[:100])  # Use a subset for speed
 
 # Visualize the SHAP values
 shap.summary_plot(shap_values, test_data[:100])
+
+
+
+
+def get_attention_scores(model, data_loader):
+    model.eval()
+    all_attention_scores = []
+    
+    with torch.no_grad():
+        for X_batch, _ in data_loader:
+            X_batch = X_batch.to(device)
+            _, attention_scores = model(X_batch)
+            attention_scores = attention_scores.cpu().numpy()  # Convert to numpy array
+            all_attention_scores.append(attention_scores)
+    
+    return np.concatenate(all_attention_scores, axis=0)
+
+# Get attention scores for training and test data
+train_attention_scores = get_attention_scores(model, train_loader)
+test_attention_scores = get_attention_scores(model, test_loader)
+
+
+def aggregate_attention_scores(attention_scores):
+    # Compute mean attention scores for each feature
+    avg_attention_scores = np.mean(attention_scores, axis=0)
+    return avg_attention_scores
+
+# Aggregate attention scores
+train_avg_attention_scores = aggregate_attention_scores(train_attention_scores)
+test_avg_attention_scores = aggregate_attention_scores(test_attention_scores)
+
+# Combine training and test scores (optional)
+overall_avg_attention_scores = (train_avg_attention_scores + test_avg_attention_scores) / 2
+
+
+
+import matplotlib.pyplot as plt
+
+def visualize_attention_scores(attention_scores, feature_names):
+    plt.figure(figsize=(12, 6))
+    plt.bar(range(len(feature_names)), attention_scores)
+    plt.xticks(range(len(feature_names)), feature_names, rotation=90)
+    plt.xlabel('Features')
+    plt.ylabel('Average Attention Score')
+    plt.title('Overall Feature Importance Based on Attention Scores')
+    plt.show()
+
+# Assuming feature_names is a list of feature names
+visualize_attention_scores(overall_avg_attention_scores, feature_names)
