@@ -199,8 +199,17 @@ predictions, test_loss = evaluate_model(model, criterion, X_test, y_test)
 predictions_np = predictions[:, -1, :].numpy().flatten()
 y_true_np = y_test.numpy().flatten()
 
-# Print test loss
+# Calculate R-squared value
+def r_squared(y_true, y_pred):
+    ss_total = np.sum((y_true - np.mean(y_true))**2)
+    ss_residual = np.sum((y_true - y_pred)**2)
+    return 1 - (ss_residual / ss_total)
+
+r2_score = r_squared(y_true_np, predictions_np)
+
+# Print test loss and R-squared value
 print(f"Test Loss: {test_loss.item()}")
+print(f"R-Squared Value: {r2_score}")
 
 # Print predictions and actual values
 print("Predictions:", predictions_np)
