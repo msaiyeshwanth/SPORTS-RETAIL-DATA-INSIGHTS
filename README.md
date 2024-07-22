@@ -330,5 +330,65 @@ def visualize_attention_scores(attention_scores, feature_names):
     plt.title('Overall Feature Importance Based on Attention Scores')
     plt.show()
 
+
+
+    
+
 # Assuming feature_names is a list of feature names
 visualize_attention_scores(overall_avg_attention_scores, feature_names)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Extract weights from the model
+def get_layer_weights(model, layer_name):
+    layer = dict(model.named_modules())[layer_name]
+    return layer.weight.data.cpu().numpy()
+
+# Compute feature importance from weights
+def compute_feature_importance(weights):
+    # Compute the importance as the mean absolute value of weights for each feature
+    feature_importance = np.mean(np.abs(weights), axis=0)
+    return feature_importance
+
+# Visualize feature importance
+def visualize_feature_importance(importance_scores, feature_names):
+    plt.figure(figsize=(12, 6))
+    plt.bar(range(len(feature_names)), importance_scores)
+    plt.xticks(range(len(feature_names)), feature_names, rotation=90)
+    plt.xlabel('Features')
+    plt.ylabel('Feature Importance')
+    plt.title('Feature Importance Based on Model Weights')
+    plt.show()
+
+# Example feature names
+feature_names = [f'Feature {i}' for i in range(30)]  # Adjust based on your actual feature names
+
+# Instantiate the model
+input_dim = 30  # Example input dimension
+hidden_dim = 64
+output_dim = 1
+model = TemporalFusionTransformer(input_dim, hidden_dim, output_dim).to('cpu')  # Use 'cuda' if GPU is available
+
+# Load the trained model state (if available)
+# model.load_state_dict(torch.load('path_to_trained_model.pth'))
+
+# Extract weights from the VariableSelectionNetwork's linear layer
+weights = get_layer_weights(model.variable_selection.fc, 'fc')
+
+# Compute feature importance
+feature_importance = compute_feature_importance(weights)
+
+# Visualize feature importance
+visualize_feature_importance(feature_importance, feature_names)
