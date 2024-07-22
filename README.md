@@ -29,42 +29,48 @@ train_size = int(total_samples * train_ratio)
 val_size = int(total_samples * val_ratio)
 test_size = total_samples - train_size - val_size
 
-# Train-validation-test split
-train_data = data.iloc[:train_size + sequence_length]
-val_data = data.iloc[train_size:train_size + val_size + sequence_length]
-test_data = data.iloc[train_size + val_size:train_size + val_size + test_size + sequence_length]
+# Separate features and target
+features = df.iloc[:, :-1].values
+target = df.iloc[:, -1].values
 
-# Normalize data
-scaler = MinMaxScaler()
-train_scaled = scaler.fit_transform(train_data)
-val_scaled = scaler.transform(val_data)
-test_scaled = scaler.transform(test_data)
+# Normalize features and target
+feature_scaler = MinMaxScaler()
+target_scaler = MinMaxScaler()
 
-# Function to create sequences
-def create_sequences(data, seq_length):
-    xs = []
-    ys = []
-    for i in range(len(data) - seq_length):
-        x = data[i:i + seq_length, :-1]
-        y = data[i + seq_length, -1]
-        xs.append(x)
-        ys.append(y)
-    return np.array(xs), np.array(ys)
+features_scaled = feature_scaler.fit_transform(features)
+target_scaled = target_scaler.fit_transform(target.reshape(-1, 1)).flatten()
 
 # Create sequences
-X_train, y_train = create_sequences(train_scaled, sequence_length)
-X_val, y_val = create_sequences(val_scaled, sequence_length)
-X_test, y_test = create_sequences(test_scaled, sequence_length)
+X, y = [], []
+for i in range(len(features_scaled) - seq_length):
+    x = features_scaled[i:i + seq_length]
+    y.append(target_scaled[i + seq_length])
+    X.append(x)
+X = np.array(X)
+y = np.array(y)
 
-# Convert to PyTorch tensors and create DataLoaders
-train_dataset = TensorDataset(torch.tensor(X_train, dtype=torch.float32), torch.tensor(y_train, dtype=torch.float32))
-val_dataset = TensorDataset(torch.tensor(X_val, dtype=torch.float32), torch.tensor(y_val, dtype=torch.float32))
-test_dataset = TensorDataset(torch.tensor(X_test, dtype=torch.float32), torch.tensor(y_test, dtype=torch.float32))
+# Split data into train, validation, and test sets
+X_train, X_temp, y_train, y_temp = train_test_split(X, y, test_size=0.2 + 0.2, shuffle=False)
+val_size_adjusted = 0.2 / (0.2 + 0.2)
+X_val, X_test, y_val, y_test = train_test_split(X_temp, y_temp, test_size=val_size_adjusted, shuffle=False)
 
-train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
-test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
+# Convert to PyTorch tensors
+X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
+y_train_tensor = torch.tensor(y_train, dtype=torch.float32)
+X_val_tensor = torch.tensor(X_val, dtype=torch.float32)
+y_val_tensor = torch.tensor(y_val, dtype=torch.float32)
+X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
+y_test_tensor = torch.tensor(y_test, dtype=torch.float32)
 
+# Create DataLoaders
+batch_size = 16
+train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
+val_dataset = TensorDataset(X_val_tensor, y_val_tensor)
+test_dataset = TensorDataset(X_test_tensor, y_test_tensor)
+
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 # Define the Gated Linear Units (GLU)
 class GLU(nn.Module):
     def __init__(self, input_dim):
