@@ -180,24 +180,30 @@ for epoch in range(num_epochs):
 # Load the best model
 model.load_state_dict(torch.load(best_model_path))
 
-# Evaluate the model
-def evaluate_model(model, criterion, X_test, y_test):
+## Function to evaluate the model using DataLoader
+def evaluate_model_with_dataloader(model, criterion, data_loader):
     model.eval()
+    total_loss = 0
+    predictions_list = []
+    true_values_list = []
+
     with torch.no_grad():
-        predictions = model(X_test)
-        test_loss = criterion(predictions[:, -1, :], y_test)  # Assuming last time step is used
-        return predictions, test_loss
+        for X_batch, y_batch in data_loader:
+            predictions = model(X_batch)
+            loss = criterion(predictions[:, -1, :], y_batch)  # Assuming last time step is used
+            total_loss += loss.item() * X_batch.size(0)  # Accumulate loss for the batch
 
-# Example test data (replace with your actual test data)
-X_test = torch.randn(9, 20, 10)   # 9 samples, 20 time steps, 10 features
-y_test = torch.randn(9, 1)        # 9 samples, 1 target each
+            predictions_list.append(predictions[:, -1, :].cpu().numpy())
+            true_values_list.append(y_batch.cpu().numpy())
 
-# Get predictions and calculate test loss
-predictions, test_loss = evaluate_model(model, criterion, X_test, y_test)
+    avg_loss = total_loss / len(data_loader.dataset)
+    predictions_np = np.concatenate(predictions_list, axis=0).flatten()
+    y_true_np = np.concatenate(true_values_list, axis=0).flatten()
 
-# Convert predictions and true values to NumPy arrays
-predictions_np = predictions[:, -1, :].numpy().flatten()
-y_true_np = y_test.numpy().flatten()
+    return avg_loss, predictions_np, y_true_np
+
+# Get predictions, test loss, and R-squared value
+test_loss, predictions_np, y_true_np = evaluate_model_with_dataloader(model, criterion, test_loader)
 
 # Calculate R-squared value
 def r_squared(y_true, y_pred):
@@ -208,7 +214,7 @@ def r_squared(y_true, y_pred):
 r2_score = r_squared(y_true_np, predictions_np)
 
 # Print test loss and R-squared value
-print(f"Test Loss: {test_loss.item()}")
+print(f"Test Loss: {test_loss}")
 print(f"R-Squared Value: {r2_score}")
 
 # Print predictions and actual values
