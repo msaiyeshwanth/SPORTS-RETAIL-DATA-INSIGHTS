@@ -180,17 +180,43 @@ for epoch in range(num_epochs):
 # Load the best model
 model.load_state_dict(torch.load(best_model_path))
 
-# Evaluation on test set
-model.eval()
-test_loss = 0.0
-with torch.no_grad():
-    for x_batch, y_batch in test_loader:
-        x_batch, y_batch = x_batch.to(device), y_batch.to(device)
-        output = model(x_batch)
-        loss = criterion(output[:, -1, :], y_batch)
-        test_loss += loss.item()
-test_loss /= len(test_loader)
-print(f'Test Loss: {test_loss}')
+# Evaluate the model
+def evaluate_model(model, criterion, X_test, y_test):
+    model.eval()
+    with torch.no_grad():
+        predictions = model(X_test)
+        test_loss = criterion(predictions[:, -1, :], y_test)  # Assuming last time step is used
+        return predictions, test_loss
+
+# Example test data (replace with your actual test data)
+X_test = torch.randn(9, 20, 10)   # 9 samples, 20 time steps, 10 features
+y_test = torch.randn(9, 1)        # 9 samples, 1 target each
+
+# Get predictions and calculate test loss
+predictions, test_loss = evaluate_model(model, criterion, X_test, y_test)
+
+# Convert predictions and true values to NumPy arrays
+predictions_np = predictions[:, -1, :].numpy().flatten()
+y_true_np = y_test.numpy().flatten()
+
+# Print test loss
+print(f"Test Loss: {test_loss.item()}")
+
+# Print predictions and actual values
+print("Predictions:", predictions_np)
+print("Actual Values:", y_true_np)
+
+# Plotting predictions vs. true values
+plt.figure(figsize=(10, 6))
+plt.scatter(y_true_np, predictions_np, color='blue', label='Predicted vs Actual')
+plt.plot([min(y_true_np), max(y_true_np)], [min(y_true_np), max(y_true_np)], color='red', linestyle='--', label='Perfect Fit')
+plt.xlabel('Actual Values')
+plt.ylabel('Predicted Values')
+plt.title('Actual vs Predicted Values')
+plt.legend()
+plt.grid(True)
+plt.show()
+
 
 # Convert the model to a format SHAP can understand
 class SHAPWrapper:
