@@ -1,69 +1,204 @@
 # SPORTS-RETAIL-DATA-INSIGHTS
 
 
-import joblib
-import shap
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
+from sklearn.preprocessing import MinMaxScaler
+import torch
+from torch.utils.data import DataLoader, TensorDataset
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+import shap
 
-# Load the saved XGBoost model and SHAP explainer
-model = joblib.load('xgboost_model.pkl')
-explainer = joblib.load('shap_explainer.pkl')
+# Load data
+data = pd.read_csv('path_to_your_data.csv')  # Replace with your data file
 
-# Load your data (example code)
-# Assuming X_test and y_test are already prepared
-X_test_df = pd.DataFrame(X_test, columns=feature_names)
+# Parameters
+sequence_length = 30
+train_ratio = 0.7
+val_ratio = 0.2
+test_ratio = 0.1
 
-# Calculate SHAP values for the test set
-shap_values = explainer(X_test_df)
+# Ensure the ratios sum to 1
+assert train_ratio + val_ratio + test_ratio == 1
 
-# Select the two instances to compare
-index1 = 0  # Replace with your first index
-index2 = 1  # Replace with your second index
+# Calculate split indices
+total_samples = len(data) - sequence_length
+train_size = int(total_samples * train_ratio)
+val_size = int(total_samples * val_ratio)
+test_size = total_samples - train_size - val_size
 
-shap_values_instance1 = shap_values[index1]
-shap_values_instance2 = shap_values[index2]
+# Train-validation-test split
+train_data = data.iloc[:train_size + sequence_length]
+val_data = data.iloc[train_size:train_size + val_size + sequence_length]
+test_data = data.iloc[train_size + val_size:train_size + val_size + test_size + sequence_length]
 
-# Add the feature actual values to the DataFrame
-comparison_df = pd.DataFrame({
-    'feature': feature_names,
-    'shap_value_instance1': shap_values_instance1.values,
-    'shap_value_instance2': shap_values_instance2.values,
-    'value_instance1': X_test_df.iloc[index1].values,
-    'value_instance2': X_test_df.iloc[index2].values
-})
+# Normalize data
+scaler = MinMaxScaler()
+train_scaled = scaler.fit_transform(train_data)
+val_scaled = scaler.transform(val_data)
+test_scaled = scaler.transform(test_data)
 
-# Predict the target values for the selected instances
-pred_instance1 = model.predict(X_test_df.iloc[[index1]])[0]
-pred_instance2 = model.predict(X_test_df.iloc[[index2]])[0]
+# Function to create sequences
+def create_sequences(data, seq_length):
+    xs = []
+    ys = []
+    for i in range(len(data) - seq_length):
+        x = data[i:i + seq_length, :-1]
+        y = data[i + seq_length, -1]
+        xs.append(x)
+        ys.append(y)
+    return np.array(xs), np.array(ys)
 
-# Create a bar plot using Plotly
-fig = go.Figure()
+# Create sequences
+X_train, y_train = create_sequences(train_scaled, sequence_length)
+X_val, y_val = create_sequences(val_scaled, sequence_length)
+X_test, y_test = create_sequences(test_scaled, sequence_length)
 
-fig.add_trace(go.Bar(
-    x=comparison_df['feature'],
-    y=comparison_df['shap_value_instance1'],
-    name=f'Instance {index1} (Pred: {pred_instance1:.4f})',
-    text=[f'{val:.4f} (val: {comparison_df["value_instance1"][i]:.4f})' for i, val in enumerate(comparison_df['shap_value_instance1'])],
-    textposition='auto'
-))
+# Convert to PyTorch tensors and create DataLoaders
+train_dataset = TensorDataset(torch.tensor(X_train, dtype=torch.float32), torch.tensor(y_train, dtype=torch.float32))
+val_dataset = TensorDataset(torch.tensor(X_val, dtype=torch.float32), torch.tensor(y_val, dtype=torch.float32))
+test_dataset = TensorDataset(torch.tensor(X_test, dtype=torch.float32), torch.tensor(y_test, dtype=torch.float32))
 
-fig.add_trace(go.Bar(
-    x=comparison_df['feature'],
-    y=comparison_df['shap_value_instance2'],
-    name=f'Instance {index2} (Pred: {pred_instance2:.4f})',
-    text=[f'{val:.4f} (val: {comparison_df["value_instance2"][i]:.4f})' for i, val in enumerate(comparison_df['shap_value_instance2'])],
-    textposition='auto'
-))
+train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
+test_loader = DataLoader(test_dataset, batch_size=32, shuffle=False)
 
-# Update layout for better readability
-fig.update_layout(
-    title=f'Comparison of SHAP Values for Instances {index1} and {index2}',
-    xaxis_title='Feature',
-    yaxis_title='SHAP Value',
-    template='plotly_white',
-    barmode='group'  # Group bars together
-)
+# Define the Gated Linear Units (GLU)
+class GLU(nn.Module):
+    def __init__(self, input_dim):
+        super(GLU, self).__init__()
+        self.fc1 = nn.Linear(input_dim, input_dim)
+        self.fc2 = nn.Linear(input_dim, input_dim)
 
-fig.show()
+    def forward(self, x):
+        return self.fc1(x) * torch.sigmoid(self.fc2(x))
+
+# Define the Variable Selection Network
+class VariableSelectionNetwork(nn.Module):
+    def __init__(self, input_dim, hidden_dim):
+        super(VariableSelectionNetwork, self).__init__()
+        self.glu = GLU(input_dim)
+        self.fc = nn.Linear(input_dim, hidden_dim)
+
+    def forward(self, x):
+        attention_scores = torch.sigmoid(self.glu(x))
+        attended_features = attention_scores * x
+        return F.relu(self.fc(attended_features))
+
+# Define the Temporal Fusion Decoder
+class TemporalFusionDecoder(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim, dropout_rate=0.2):
+        super(TemporalFusionDecoder, self).__init__()
+        self.lstm = nn.LSTM(input_dim, hidden_dim, batch_first=True, dropout=dropout_rate)
+        self.fc = nn.Linear(hidden_dim, output_dim)
+
+    def forward(self, x):
+        lstm_out, _ = self.lstm(x)
+        return self.fc(lstm_out)
+
+# Define the Temporal Fusion Transformer model
+class TemporalFusionTransformer(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim, dropout_rate=0.2):
+        super(TemporalFusionTransformer, self).__init__()
+        self.variable_selection = VariableSelectionNetwork(input_dim, hidden_dim)
+        self.temporal_decoder = TemporalFusionDecoder(hidden_dim, hidden_dim, output_dim, dropout_rate)
+
+    def forward(self, x):
+        selected_features = self.variable_selection(x)
+        return self.temporal_decoder(selected_features)
+
+# Set device
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+# Parameters
+input_dim = X_train.shape[2]
+hidden_dim = 64
+output_dim = 1
+dropout_rate = 0.2
+num_epochs = 100
+patience = 10
+best_model_path = 'best_model.pth'
+
+# Initialize model
+model = TemporalFusionTransformer(input_dim, hidden_dim, output_dim, dropout_rate).to(device)
+criterion = nn.MSELoss()
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+# Early stopping and model checkpointing
+best_val_loss = float('inf')
+epochs_no_improve = 0
+
+# Training loop
+for epoch in range(num_epochs):
+    model.train()
+    train_loss = 0.0
+    for x_batch, y_batch in train_loader:
+        x_batch, y_batch = x_batch.to(device), y_batch.to(device)
+        optimizer.zero_grad()
+        output = model(x_batch)
+        loss = criterion(output[:, -1, :], y_batch)
+        loss.backward()
+        optimizer.step()
+        train_loss += loss.item()
+    train_loss /= len(train_loader)
+    print(f'Epoch {epoch+1}/{num_epochs}, Training Loss: {train_loss}')
+
+    # Validation
+    model.eval()
+    val_loss = 0.0
+    with torch.no_grad():
+        for x_batch, y_batch in val_loader:
+            x_batch, y_batch = x_batch.to(device), y_batch.to(device)
+            output = model(x_batch)
+            loss = criterion(output[:, -1, :], y_batch)
+            val_loss += loss.item()
+    val_loss /= len(val_loader)
+    print(f'Epoch {epoch+1}/{num_epochs}, Validation Loss: {val_loss}')
+    
+    # Early stopping
+    if val_loss < best_val_loss:
+        best_val_loss = val_loss
+        torch.save(model.state_dict(), best_model_path)
+        epochs_no_improve = 0
+    else:
+        epochs_no_improve += 1
+    
+    if epochs_no_improve == patience:
+        print('Early stopping!')
+        break
+
+# Load the best model
+model.load_state_dict(torch.load(best_model_path))
+
+# Evaluation on test set
+model.eval()
+test_loss = 0.0
+with torch.no_grad():
+    for x_batch, y_batch in test_loader:
+        x_batch, y_batch = x_batch.to(device), y_batch.to(device)
+        output = model(x_batch)
+        loss = criterion(output[:, -1, :], y_batch)
+        test_loss += loss.item()
+test_loss /= len(test_loader)
+print(f'Test Loss: {test_loss}')
+
+# Convert the model to a format SHAP can understand
+class SHAPWrapper:
+    def __init__(self, model):
+        self.model = model
+    
+    def predict(self, x):
+        self.model.eval()
+        with torch.no_grad():
+            x = torch.tensor(x, dtype=torch.float32).to(device)
+            output = self.model(x).cpu().numpy()
+        return output[:, -1, 0]  # Adjust based on your output shape
+
+shap_model = SHAPWrapper(model)
+explainer = shap.KernelExplainer(shap_model.predict, X_train[:100])  # Use a subset for speed
+shap_values = explainer.shap_values(X_test[:100])  # Use a subset for speed
+
+# Visualize the SHAP values
+shap.summary_plot(shap_values, X_test[:100])
