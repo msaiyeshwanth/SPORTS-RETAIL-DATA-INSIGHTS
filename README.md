@@ -239,6 +239,8 @@ plt.grid(True)
 plt.show()
 
 
+import shap
+
 # Convert the model to a format SHAP can understand
 class SHAPWrapper:
     def __init__(self, model):
@@ -251,9 +253,33 @@ class SHAPWrapper:
             output = self.model(x).cpu().numpy()
         return output[:, -1, 0]  # Adjust based on your output shape
 
-shap_model = SHAPWrapper(model)
-explainer = shap.KernelExplainer(shap_model.predict, X_train[:100])  # Use a subset for speed
-shap_values = explainer.shap_values(X_test[:100])  # Use a subset for speed
+# Create a SHAP explainer
+def create_shap_explainer(model, data_loader):
+    # Get a sample of the data
+    sample_data = []
+    for x_batch, _ in data_loader:
+        sample_data.append(x_batch.numpy())
+        if len(sample_data) * batch_size >= 100:  # Adjust sample size as needed
+            break
+    sample_data = np.concatenate(sample_data, axis=0)
+    
+    shap_model = SHAPWrapper(model)
+    explainer = shap.KernelExplainer(shap_model.predict, sample_data[:100])  # Use a subset for speed
+    return explainer
+
+# Create the SHAP explainer
+explainer = create_shap_explainer(model, train_loader)
+
+# Select a batch from the test_loader to explain
+def get_data_from_loader(data_loader, batch_index=0):
+    for i, (x_batch, _) in enumerate(data_loader):
+        if i == batch_index:
+            return x_batch.numpy()
+    return None
+
+# Explain a subset of test data
+test_data = get_data_from_loader(test_loader, batch_index=0)
+shap_values = explainer.shap_values(test_data[:100])  # Use a subset for speed
 
 # Visualize the SHAP values
-shap.summary_plot(shap_values, X_test[:100])
+shap.summary_plot(shap_values, test_data[:100])
