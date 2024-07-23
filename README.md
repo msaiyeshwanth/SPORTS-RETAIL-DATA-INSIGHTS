@@ -392,3 +392,19 @@ feature_importance = compute_feature_importance(weights)
 
 # Visualize feature importance
 visualize_feature_importance(feature_importance, feature_names)
+
+
+
+# Count the parameters manually
+def count_parameters(model):
+    return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+total_params = count_parameters(model)
+print(f'Total number of parameters: {total_params}')
+
+# Detailed breakdown of parameters
+for name, param in model.named_parameters():
+    if param.requires_grad:
+        print(f'{name}: {param.numel()} parameters')
+
+This approach provides a comprehensive overview of the model’s architecture and the number of parameters, both in a summarized form and a detailed breakdown.
