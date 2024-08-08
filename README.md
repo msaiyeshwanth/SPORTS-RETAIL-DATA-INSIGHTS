@@ -1,36 +1,21 @@
 # SPORTS-RETAIL-DATA-INSIGHTS
 
+plt.figure(figsize=(10, 6))
 
-import pandas as pd
-from wordcloud import WordCloud
-import matplotlib.pyplot as plt
+# Normalize for color mapping but store actual values for annotation
+normed_df = df.copy()
+for i in range(normed_df.shape[0]):
+    normed_df.iloc[i, :] = (normed_df.iloc[i, :] - normed_df.iloc[i, :].min()) / (normed_df.iloc[i, :].max() - normed_df.iloc[i, :].min())
 
-# Load your Excel data into a DataFrame
-file_path = 'path_to_your_file.xlsx'  # Update this with the path to your file
-df = pd.read_excel(file_path)
+# Create the heatmap
+sns.heatmap(normed_df, annot=df, cmap='coolwarm', linewidths=0.5, linecolor='gray', cbar_kws={'label': 'Normalized SHAP Value'})
 
-# Assuming your feature names are in a column named 'features'
-# Replace spaces with underscores in all multi-word phrases
-df['features'] = df['features'].str.replace(' ', '_')
+# Customize the plot
+plt.title('Actual SHAP Values Heatmap with Separate Row Hues')
+plt.xlabel('Performance Periods')
+plt.ylabel('Features')
+plt.xticks(rotation=45)
+plt.yticks(rotation=0)
 
-# Join all feature names into a single string
-text = ' '.join(df['features'].tolist())
-
-# Create the word cloud
-wordcloud = WordCloud(width=800, height=400, background_color='white', collocations=False).generate(text)
-
-# Custom function to draw the word cloud with underscores replaced by spaces
-def draw_word_cloud(wordcloud):
-    # Create a new dictionary with underscores replaced by spaces
-    word_freq = {word.replace('_', ' '): freq for word, freq in wordcloud.words_.items()}
-    
-    # Generate a new word cloud with the modified word frequencies
-    new_wordcloud = WordCloud(width=800, height=400, background_color='white').generate_from_frequencies(word_freq)
-    
-    plt.figure(figsize=(10, 5))
-    plt.imshow(new_wordcloud, interpolation='bilinear')
-    plt.axis('off')
-    plt.show()
-
-# Display the word cloud
-draw_word_cloud(wordcloud)
+plt.tight_layout()
+plt.show()
