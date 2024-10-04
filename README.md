@@ -5,16 +5,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 import pandas as pd
 import numpy as np
-import os
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
+import os
 
 # Step 1: Data Preparation
 
 def prepare_data(df):
     """
     Clean and scale the data.
-    :param df: DataFrame containing the input features.
+    :param df: DataFrame containing the input features and target variable.
     :return: Scaled DataFrame.
     """
     df['timestamp'] = pd.to_datetime(df['timestamp'])
@@ -75,23 +75,25 @@ class TFT(nn.Module):
     def __init__(self, input_size, static_size, lstm_hidden_size, num_layers, attn_heads, dropout):
         super(TFT, self).__init__()
 
+        # Static Covariate Encoder (only if static size > 0)
         self.static_size = static_size
         if static_size > 0:
             self.static_encoder = StaticCovariateEncoder(static_size, lstm_hidden_size)
 
+        # Variable Selection Networks
         self.temporal_var_select = GatedResidualNetwork(input_size, lstm_hidden_size, input_size)
 
-        # LSTM layers (stacked)
+        # LSTM for temporal input
         self.lstm = nn.LSTM(input_size, lstm_hidden_size, num_layers=num_layers, batch_first=True, dropout=dropout)
 
-        # Multihead Attention layer
+        # Multihead Attention for long-term dependencies
         self.attn = nn.MultiheadAttention(embed_dim=lstm_hidden_size, num_heads=attn_heads, batch_first=True)
 
         # Gated and Residual connections
         self.gate = GatedResidualNetwork(lstm_hidden_size, lstm_hidden_size, lstm_hidden_size)
 
-        # Output layer for quantiles
-        self.output_layer = nn.Linear(lstm_hidden_size, 3)
+        # Final output layer (Quantile Outputs)
+        self.output_layer = nn.Linear(lstm_hidden_size, 3)  # For quantile outputs: 10th, 50th, 90th percentiles
 
     def forward(self, static_inputs, temporal_inputs):
         if self.static_size > 0 and static_inputs.size(-1) > 0:
@@ -100,16 +102,32 @@ class TFT(nn.Module):
         else:
             static_selected = None
 
+        # Temporal input processing
         temporal_selected = self.temporal_var_select(temporal_inputs)
+
+        # LSTM for temporal processing
         lstm_out, _ = self.lstm(temporal_selected)
-        attn_out, _ = self.attn(lstm_out, lstm_out, lstm_out)
+
+        # Multi-head attention layer
+        attn_out, self.attn_weights = self.attn(lstm_out, lstm_out, lstm_out)
+
+        # Gated residual network
         gated_out = self.gate(attn_out)
-        output = self.output_layer(gated_out[:, -1, :])  # Only the last time step
+
+        # Output layer for quantile predictions
+        output = self.output_layer(gated_out[:, -1, :])  # Only use the last time step for prediction
         return output
 
 # Step 3: Quantile Loss Function
 
 def quantile_loss(y_true, y_pred, quantiles):
+    """
+    Quantile loss for multiple quantiles.
+    :param y_true: True values.
+    :param y_pred: Predicted values.
+    :param quantiles: List of quantiles for regression.
+    :return: Mean quantile loss.
+    """
     losses = []
     for q in quantiles:
         loss = torch.where(y_true < y_pred[:, q], (y_pred[:, q] - y_true) * q, (y_true - y_pred[:, q]) * (1 - q))
@@ -167,10 +185,17 @@ def train_model(model, X_train, y_train, X_val, y_val, quantiles, num_epochs=100
             print("Early stopping triggered.")
             break
 
-# Step 6: Variable Importance
+# Step 6: Variable Importance Plotting
 
 def plot_variable_importance(model, feature_names):
+    """
+    Extracts and plots the variable importance using attention weights.
+    :param model: Trained TFT model.
+    :param feature_names: List of feature names.
+    """
     attention_weights = model.attn_weights.detach().cpu().numpy()
+
+    # Average attention weights across heads and time steps
     mean_attention_weights = np.mean(attention_weights, axis=1).mean(axis=0)
 
     import plotly.express as px
@@ -183,10 +208,18 @@ def plot_variable_importance(model, feature_names):
     fig.show()
 
 # Step 7: Example of calling the training function
-# Adjust the following variables: X_train, y_train, X_val, y_val
-quantiles = [0.1, 0.5, 0.9]
-train_model(model, X_train, y_train, X_val, y_val, quantiles)
 
-# Plot variable importance after training
-feature_names = ['Pressure', 'Oxygen', 'Glass Temperature', 'Humidity', 'Wind Speed']
-plot_variable_importance(model, feature_names)
+# Prepare the data and sequences
+# Replace 'your_data.csv' with the path to your dataset, adjust column names as needed
+# df = pd.read_csv('your_data.csv')
+# scaled_df = prepare_data(df)
+# X_train, y_train = create_sequences(scaled_df)
+
+quantiles = [0.1, 0.5, 0.9]
+# Uncomment after preparing X_train, y_train, X_val, y_val
+# train_model(model, X_train, y_train, X_val, y_val, quantiles)
+
+# Step 8: Plot variable importance after training
+# Uncomment to plot variable importance after training
+# feature_names = ['Pressure', 'Oxygen', 'Glass Temperature', 'Humidity', 'Wind Speed']
+# plot_variable_importance(model, feature_names)
