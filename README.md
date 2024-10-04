@@ -266,3 +266,165 @@ with torch.no_grad():
 # Print predictions
 print("Predictions (quantiles):")
 print(predictions)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import pandas as pd
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+import numpy as np
+import os
+
+# Step 1: Data Preparation
+
+def prepare_data(df):
+    """
+    Clean and scale the data.
+    :param df: DataFrame containing 'pressure', 'oxygen', and 'glass_temperature'.
+    :return: Scaled DataFrame.
+    """
+    # Convert timestamp to datetime and set as index
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    df.set_index('timestamp', inplace=True)
+
+    # Scale features
+    scaler = StandardScaler()
+    scaled_features = scaler.fit_transform(df[['pressure', 'oxygen', 'glass_temperature']])
+    
+    # Create DataFrame for scaled features
+    scaled_df = pd.DataFrame(scaled_features, columns=['pressure', 'oxygen', 'glass_temperature'])
+    return scaled_df
+
+def create_sequences(data, target_col='glass_temperature', seq_length=24):
+    """
+    Create input sequences and corresponding targets.
+    :param data: Scaled DataFrame.
+    :param target_col: Column name for the target variable.
+    :param seq_length: Length of each input sequence.
+    :return: Input sequences and targets as tensors.
+    """
+    sequences = []
+    targets = []
+    for i in range(len(data) - seq_length):
+        seq = data.iloc[i:i + seq_length].values  # Get the sequence
+        target = data.iloc[i + seq_length][target_col]  # Get the target
+        sequences.append(seq)
+        targets.append(target)
+    return torch.tensor(sequences, dtype=torch.float32), torch.tensor(targets, dtype=torch.float32)
+
+# Step 2: Model Definition
+
+class GatedResidualNetwork(nn.Module):
+    def __init__(self, input_dim, hidden_dim, output_dim):
+        super(GatedResidualNetwork, self).__init__()
+        self.fc1 = nn.Linear(input_dim, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, output_dim)
+        self.glu = nn.GLU()  # Gated Linear Unit
+        self.layer_norm = nn.LayerNorm(output_dim)  # Layer normalization
+
+    def forward(self, x):
+        hidden = F.elu(self.fc1(x))  # Apply ELU activation
+        output = self.fc2(hidden)  # Output from second layer
+        gated_output = self.glu(output)  # Apply GLU
+        return self.layer_norm(x + gated_output)  # Add residual connection and normalize
+
+class StaticCovariateEncoder(nn.Module):
+    def __init__(self, static_input_dim, hidden_dim):
+        super(StaticCovariateEncoder, self).__init__()
+        if static_input_dim > 0:
+            self.fc = nn.Linear(static_input_dim, hidden_dim)
+
+    def forward(self, static_input):
+        if static_input.size(-1) > 0:
+            return F.elu(self.fc(static_input))  # Apply ELU activation only if static input size > 0
+        return None
+
+class TFT(nn.Module):
+    def __init__(self, input_size, static_size, lstm_hidden_size, attn_heads, dropout=0.1):
+        super(TFT, self).__init__()
+        
+        # Static Covariate Encoder (only if static size > 0)
+        self.static_size = static_size
+        if static_size > 0:
+            self.static_encoder = StaticCovariateEncoder(static_size, lstm_hidden_size)
+
+        # Variable Selection Networks
+        self.static_var_select = GatedResidualNetwork(input_size, lstm_hidden_size, input_size)
+        self.temporal_var_select = GatedResidualNetwork(input_size, lstm_hidden_size, input_size)
+
+        # LSTM layer
+        self.lstm = nn.LSTM(input_size, lstm_hidden_size, batch_first=True)
+
+        # Attention layer
+        self.attn = nn.MultiheadAttention(embed_dim=lstm_hidden_size, num_heads=attn_heads, batch_first=True)
+
+        # Gating and Residual connections
+        self.gate = GatedResidualNetwork(lstm_hidden_size, lstm_hidden_size, lstm_hidden_size)
+
+        # Final output layer
+        self.output_layer = nn.Linear(lstm_hidden_size, 1)
+
+    def forward(self, static_inputs, temporal_inputs):
+        if self.static_size > 0 and static_inputs.size(-1) > 0:
+            # Encode static inputs if provided
+            static_encoded = self.static_encoder(static_inputs)
+            static_selected = self.static_var_select(static_encoded)
+        else:
+            static_selected = None
+
+        # Apply variable selection to temporal inputs
+        temporal_selected = self.temporal_var_select(temporal_inputs)
+
+        # LSTM for temporal processing
+        lstm_out, _ = self.lstm(temporal_selected)
+
+        # Apply multi-head attention
+        attn_out, _ = self.attn(lstm_out, lstm_out, lstm_out)
+
+        # Gated residual network
+        gated_out = self.gate(attn_out)
+
+        # Output layer for final forecast
+        output = self.output_layer(gated_out)
+        return output
+
+# Step 3: Loss Function for Quantile Regression
+
+def quantile_loss(y_true, y_pred, quantiles):
+    """
+    Calculate quantile loss for multiple quantiles.
+    :param y_true: True values (targets).
+    :param y_pred: Predicted values from the model.
+    :param quantiles: List of quantiles to calculate the loss for.
+    :return: Mean quantile loss across specified quantiles.
+    """
+    losses = []
+    for q in quantiles:
+        loss = torch.where(y_true < y_pred[:, 0], (y_pred[:, 0] - y_true) * q, (y_true - y_pred[:, 0]) * (1 - q))
+        losses.append(loss)
+    return torch.mean(torch.stack(losses))
+
+# Model Initialization
+
+input_size = 3  # Number of input features (pressure, oxygen, glass_temperature)
+static_size = 0  # Number of static features
+lstm_hidden_size = 64
+attn_heads = 8
+model = TFT(input_size=input_size, static_size=static_size, lstm_hidden_size=lstm_hidden_size, attn_heads=attn_heads)
+
+# Rest of the code for training, evaluation, etc.
