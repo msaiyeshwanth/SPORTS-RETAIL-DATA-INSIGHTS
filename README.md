@@ -49,10 +49,15 @@ train_size = int(len(data) * 0.8)  # 80% for training
 val_size = int(len(data) * 0.1)  # 10% for validation
 test_size = len(data) - train_size - val_size  # Remaining for testing
 
-# Sequential split
-train_data = data[:train_size]
-val_data = data[train_size:train_size + val_size]
-test_data = data[train_size + val_size:]
+# Create indices for sequential split
+train_indices = list(range(train_size))
+val_indices = list(range(train_size, train_size + val_size))
+test_indices = list(range(train_size + val_size, len(data)))
+
+# Create subsets
+train_data = torch.utils.data.Subset(data, train_indices)
+val_data = torch.utils.data.Subset(data, val_indices)
+test_data = torch.utils.data.Subset(data, test_indices)
 
 # Step 4: Create DataLoaders without shuffling to preserve time order
 batch_size = 16
