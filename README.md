@@ -116,3 +116,45 @@ plt.show()
 # Step 10: Variable Importance
 interpretation = tft.interpret_output(test_predictions, reduction="sum")
 tft.plot_variable_importance(interpretation)
+
+
+
+
+
+
+
+
+import torch
+from pytorch_forecasting import TimeSeriesDataSet
+
+# Step 1: Create the TimeSeriesDataSet
+data = TimeSeriesDataSet(
+    df,
+    time_idx='time_idx',  # Time index column (should be integer)
+    target='target',  # Glass temperature (your target column)
+    group_ids=['glass_id'],  # Group IDs (same for all if a single glass)
+    max_encoder_length=24,  # How many time steps to look back
+    max_prediction_length=1,  # Predicting one step ahead
+    static_categoricals=[],  # Static categorical features
+    static_reals=[],  # Static real features
+    time_varying_known_reals=['pressure', 'oxygen', 'humidity', 'wind_speed'],  # Known features
+    time_varying_unknown_reals=['glass_temperature'],  # The target
+)
+
+# Step 2: Sequential Split into Train, Validation, and Test Sets
+# Use indices to split the dataset sequentially to prevent data leakage
+train_size = int(len(data) * 0.8)  # 80% for training
+val_size = int(len(data) * 0.1)  # 10% for validation
+test_size = len(data) - train_size - val_size  # Remaining for testing
+
+# Sequential split using the range of indices
+train_data = TimeSeriesDataSet.from_dataset(data, stop=train_size)  # Up to train_size
+val_data = TimeSeriesDataSet.from_dataset(data, start=train_size, stop=train_size + val_size)  # From train_size to val_size
+test_data = TimeSeriesDataSet.from_dataset(data, start=train_size + val_size)  # Remaining data for test set
+
+# Step 3: Convert each subset into a DataLoader using to_dataloader()
+train_dataloader = train_data.to_dataloader(batch_size=16, shuffle=False, num_workers=4)
+val_dataloader = val_data.to_dataloader(batch_size=16, shuffle=False, num_workers=4)
+test_dataloader = test_data.to_dataloader(batch_size=16, shuffle=False, num_workers=4)
+
+# Now you can use train_dataloader, val_dataloader, and test_dataloader in your training loop
