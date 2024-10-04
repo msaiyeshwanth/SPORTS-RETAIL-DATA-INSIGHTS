@@ -6,18 +6,16 @@ from sklearn.preprocessing import StandardScaler
 from pytorch_forecasting import TimeSeriesDataSet, TemporalFusionTransformer, QuantileLoss
 from torch.utils.data import DataLoader
 from pytorch_lightning import Trainer
-import pytorch_lightning as pl
-from pytorch_forecasting.metrics import RMSE, MAE
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_percentage_error
 import matplotlib.pyplot as plt
 
-# Step 1: Data Preparation
-# Assuming 'pressure', 'oxygen', 'glass_temperature' are columns in your data
+# Step 1: Data Preparation for Hourly Data
+df = pd.read_csv("your_data.csv")  # Load your dataset
+df['timestamp'] = pd.to_datetime(df['timestamp'])  # Convert to datetime
 
-# Example data preparation
-df = pd.read_csv("your_data.csv")
-df['timestamp'] = pd.to_datetime(df['timestamp'])
-df['time_idx'] = (df['timestamp'] - df['timestamp'].min()).dt.days  # Sequential time index
+# Create an hourly time index (integer-based)
+df['time_idx'] = (df['timestamp'] - df['timestamp'].min()).dt.total_seconds() // 3600
+df['time_idx'] = df['time_idx'].astype(int)
 
 # Scale the features
 scaler = StandardScaler()
@@ -26,75 +24,90 @@ df[['pressure', 'oxygen', 'humidity', 'wind_speed']] = scaler.fit_transform(df[[
 # Set the target variable
 df['target'] = df['glass_temperature']
 
-# Step 2: Define TimeSeriesDataSet
-max_encoder_length = 1  # Can be set to 6 for another run (1 and 6 sequence lengths)
-max_prediction_length = 1  # Since you're analyzing rather than forecasting
+# Step 2: Define TimeSeriesDataSet without group_id
+max_encoder_length = 1  # Set to 1 for short sequences; can be set to 6 for testing
+max_prediction_length = 1  # We want to predict one step ahead
 
-# Define the TimeSeriesDataSet
+# Create a dummy group ID column
+df['glass_id'] = 0  # Assigning a constant ID for all rows
+
 data = TimeSeriesDataSet(
     df,
-    time_idx='time_idx',
-    target='target',
-    group_ids=['glass_id'],  # Just use a dummy group ID for the single glass sample
+    time_idx='time_idx',  # Time index as an integer
+    target='target',  # Glass temperature
+    group_ids=['glass_id'],  # Dummy group ID for a single glass sample
     max_encoder_length=max_encoder_length,
     max_prediction_length=max_prediction_length,
     static_categoricals=[],  # No static categorical features
     static_reals=[],  # No static real features
-    time_varying_known_reals=['pressure', 'oxygen', 'humidity', 'wind_speed'],  # Features used
-    time_varying_unknown_reals=['glass_temperature'],  # Glass temperature as the target variable
+    time_varying_known_reals=['pressure', 'oxygen', 'humidity', 'wind_speed'],  # Known features
+    time_varying_unknown_reals=['glass_temperature'],  # Target
 )
 
-# Step 3: Create DataLoader
-batch_size = 16
-train_dataloader = DataLoader(data, batch_size=batch_size, shuffle=True)
+# Step 3: Sequential Split into Train, Validation, and Test Sets
+train_size = int(len(data) * 0.8)  # 80% for training
+val_size = int(len(data) * 0.1)  # 10% for validation
+test_size = len(data) - train_size - val_size  # Remaining for testing
 
-# Step 4: Define TFT Model
+# Sequential split
+train_data = data[:train_size]
+val_data = data[train_size:train_size + val_size]
+test_data = data[train_size + val_size:]
+
+# Step 4: Create DataLoaders without shuffling to preserve time order
+batch_size = 16
+train_dataloader = DataLoader(train_data, batch_size=batch_size, shuffle=False, num_workers=15)
+val_dataloader = DataLoader(val_data, batch_size=batch_size, shuffle=False, num_workers=15)
+test_dataloader = DataLoader(test_data, batch_size=batch_size, shuffle=False, num_workers=15)
+
+# Step 5: Define TFT Model
 tft = TemporalFusionTransformer.from_dataset(
     data,
     learning_rate=0.03,
     hidden_size=16,  # Number of hidden units in the LSTM
-    attention_head_size=1,
+    attention_head_size=8,
     dropout=0.2,
-    hidden_continuous_size=8,  # Hidden size for continuous variables
-    output_size=7,  # Number of quantiles for quantile loss
-    loss=QuantileLoss(),  # Quantile loss
-    reduce_on_plateau_patience=4,
+    hidden_continuous_size=8,
+    output_size=3,  # For predicting quantiles (e.g., 10th, 50th, 90th percentiles)
+    loss=QuantileLoss(),  # Use Quantile Loss for quantile regression
 )
 
-# Step 5: Train the Model
+# Step 6: Train the Model
 trainer = Trainer(
     max_epochs=30,  # Train for 30 epochs
     gpus=1 if torch.cuda.is_available() else 0,  # Use GPU if available
+    log_every_n_steps=5  # Adjust logging interval
 )
 
-trainer.fit(tft, train_dataloaders=train_dataloader)
+# Fit the model with the trainer
+trainer.fit(tft, train_dataloaders=train_dataloader, val_dataloaders=val_dataloader)
 
-# Step 6: Make Predictions
-predictions, x = tft.predict(train_dataloader, return_x=True)
+# Step 7: Predictions and Evaluation on the Test Set
+test_predictions, x = tft.predict(test_dataloader, return_x=True)
 
 # Convert predictions and actuals back to unscaled values
-predictions = scaler.inverse_transform(predictions)
+test_predictions = scaler.inverse_transform(test_predictions)
 actuals = scaler.inverse_transform(x['decoder_target'].numpy())
 
-# Step 7: Evaluation Metrics
-r_squared = r2_score(actuals, predictions)
-rmse = mean_squared_error(actuals, predictions, squared=False)
-mape = mean_absolute_percentage_error(actuals, predictions)
+# Step 8: Evaluation Metrics
+r_squared = r2_score(actuals, test_predictions)
+rmse = mean_squared_error(actuals, test_predictions, squared=False)
+mape = mean_absolute_percentage_error(actuals, test_predictions)
 
 print(f"R-squared: {r_squared:.3f}")
 print(f"RMSE: {rmse:.3f}")
 print(f"MAPE: {mape:.3f}")
 
-# Step 8: Time Series Plot (Actual vs Predicted)
+# Step 9: Time Series Plot (Actual vs Predicted)
 plt.figure(figsize=(10, 6))
 plt.plot(actuals, label='Actual', color='blue')
-plt.plot(predictions, label='Predicted', color='red', linestyle='--')
+plt.plot(test_predictions, label='Predicted', color='red', linestyle='--')
 plt.title("Actual vs Predicted Glass Temperature")
 plt.xlabel("Time")
 plt.ylabel("Glass Temperature")
 plt.legend()
 plt.show()
 
-# Step 9: Variable Importance
-interpretation = tft.interpret_output(predictions, reduction="sum")
+# Step 10: Variable Importance
+interpretation = tft.interpret_output(test_predictions, reduction="sum")
 tft.plot_variable_importance(interpretation)
