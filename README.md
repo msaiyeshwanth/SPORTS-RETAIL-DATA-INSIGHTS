@@ -1,114 +1,180 @@
-# SPORTS-RETAIL-DATA-INSIGHTS
+!pip install transformers langchain sentence-transformers faiss-cpu pypdf python-docx python-pptx openpyxl email
 
-import torch
-import pandas as pd
+
+import PyPDF2
+import os
+import glob
+import faiss
 import numpy as np
-import matplotlib.pyplot as plt
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import mean_absolute_error, mean_absolute_percentage_error, r2_score
-from transformers import AutoModelForCausalLM, Trainer, TrainingArguments
-import joblib
-import shap  # SHAP for feature importance analysis
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from sentence_transformers import SentenceTransformer
+from transformers import pipeline
+from IPython.display import display
+from ipywidgets import FileUpload, Text
+import docx
+from pptx import Presentation
+import openpyxl
+from email import policy
+from email.parser import BytesParser
 
-# Step 1: Load and Preprocess Data
-data = pd.read_csv('glass_manufacturing_data.csv')
-features = data[['airflow', 'pressure', 'temperature']]
-target = data['glass_temperature'].values  # Replace with your actual target column name
 
-# Standardize features
-scaler = StandardScaler()
-normed_features = scaler.fit_transform(features)
 
-# Convert to PyTorch tensors
-normed_seqs = torch.tensor(normed_features, dtype=torch.float32)
-target_tensor = torch.tensor(target, dtype=torch.float32).unsqueeze(1)  # Make target a column vector
+def extract_text_from_pdfs(pdf_folder):
+    text_data = []
+    pdf_files = glob.glob(os.path.join(pdf_folder, "*.pdf"))
+    for pdf_file in pdf_files:
+        with open(pdf_file, "rb") as file:
+            reader = PyPDF2.PdfReader(file)
+            text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
+            text_data.append(text)
+    return text_data
 
-# Step 2: Define Model Parameters
-context_length = normed_features.shape[1]  # Number of features
-batch_size = 16  # Adjust based on your data size
+def extract_text_from_word(doc_folder):
+    text_data = []
+    doc_files = glob.glob(os.path.join(doc_folder, "*.docx"))
+    for doc_file in doc_files:
+        doc = docx.Document(doc_file)
+        text = "\n".join([para.text for para in doc.paragraphs])
+        text_data.append(text)
+    return text_data
 
-# Step 3: Load Pre-trained Time-MoE Model
-model = AutoModelForCausalLM.from_pretrained(
-    'Maple728/TimeMoE-50M',
-    device_map="cpu",  # Use "cuda" for GPU
-    trust_remote_code=True,
-)
+def extract_text_from_txt(txt_folder):
+    text_data = []
+    txt_files = glob.glob(os.path.join(txt_folder, "*.txt"))
+    for txt_file in txt_files:
+        with open(txt_file, 'r') as file:
+            text = file.read()
+            text_data.append(text)
+    return text_data
 
-# Step 4: Prepare Dataset
-class GlassDataset(torch.utils.data.Dataset):
-    def __init__(self, features, target):
-        self.features = features
-        self.target = target
+def extract_text_from_ppt(ppt_folder):
+    text_data = []
+    ppt_files = glob.glob(os.path.join(ppt_folder, "*.pptx"))
+    for ppt_file in ppt_files:
+        presentation = Presentation(ppt_file)
+        text = "\n".join([slide.shapes.text for slide in presentation.slides if hasattr(slide.shapes, 'text')])
+        text_data.append(text)
+    return text_data
 
-    def __len__(self):
-        return len(self.target)
+def extract_text_from_excel(excel_folder):
+    text_data = []
+    excel_files = glob.glob(os.path.join(excel_folder, "*.xlsx"))
+    for excel_file in excel_files:
+        wb = openpyxl.load_workbook(excel_file)
+        sheet = wb.active
+        text = "\n".join([str(cell.value) for row in sheet.iter_rows() for cell in row])
+        text_data.append(text)
+    return text_data
 
-    def __getitem__(self, idx):
-        return self.features[idx], self.target[idx]
+def extract_text_from_emails(email_folder):
+    text_data = []
+    email_files = glob.glob(os.path.join(email_folder, "*.eml"))
+    for email_file in email_files:
+        with open(email_file, 'rb') as f:
+            msg = BytesParser(policy=policy.default).parse(f)
+            text = msg.get_body(preferencelist=('plain')).get_payload()
+            text_data.append(text)
+    return text_data
 
-# Create DataLoader
-dataset = GlassDataset(normed_seqs, target_tensor)
-dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-# Step 5: Training Arguments
-training_args = TrainingArguments(
-    output_dir='./results',
-    evaluation_strategy='epoch',
-    learning_rate=2e-5,
-    per_device_train_batch_size=batch_size,
-    num_train_epochs=5,
-    weight_decay=0.01,
-    logging_dir='./logs',
-)
 
-# Step 6: Trainer Setup
-trainer = Trainer(
-    model=model,
-    args=training_args,
-    train_dataset=dataset,
-)
 
-# Step 7: Train the Model
-trainer.train()
 
-# Step 8: Evaluate Model
-model.eval()  # Switch to evaluation mode
-predictions = []
-with torch.no_grad():
-    for batch in dataloader:
-        inputs, _ = batch
-        output = model.generate(inputs)
-        preds = output[:, -1]  # Get last token predictions
-        predictions.append(preds)
+upload_widget = FileUpload(accept=".pdf,.docx,.txt,.pptx,.xlsx,.eml", multiple=True)
+display(upload_widget)
 
-predictions = torch.cat(predictions).numpy().flatten()  # Convert to 1D array
+def process_uploaded_files(upload_widget):
+    # Save uploaded files
+    file_folder = "uploaded_files"
+    os.makedirs(file_folder, exist_ok=True)
+    
+    for filename, file in upload_widget.value.items():
+        with open(os.path.join(file_folder, filename), 'wb') as f:
+            f.write(file['content'])
+    
+    # Extract text from different file types
+    pdf_text = extract_text_from_pdfs(file_folder)
+    word_text = extract_text_from_word(file_folder)
+    txt_text = extract_text_from_txt(file_folder)
+    ppt_text = extract_text_from_ppt(file_folder)
+    excel_text = extract_text_from_excel(file_folder)
+    email_text = extract_text_from_emails(file_folder)
+    
+    # Combine all extracted texts
+    all_text = pdf_text + word_text + txt_text + ppt_text + excel_text + email_text
+    return all_text
 
-# Calculate evaluation metrics
-mae = mean_absolute_error(target, predictions)
-mape = mean_absolute_percentage_error(target, predictions) * 100
-r2 = r2_score(target, predictions)
+documents = process_uploaded_files(upload_widget)
 
-print(f"MAE: {mae}, MAPE: {mape}%, R²: {r2}")
 
-# Step 9: Plot Actual vs. Predicted
-plt.figure(figsize=(10, 5))
-plt.plot(target, label='Actual', color='blue')
-plt.plot(predictions, label='Predicted', color='orange')
-plt.title('Actual vs. Predicted Glass Temperature')
-plt.xlabel('Sample Index')
-plt.ylabel('Glass Temperature')
-plt.legend()
-plt.show()
 
-# Step 10: Save the Best Trained Model
-model.save_pretrained('best_time_moe_model')
-scaler_filename = 'scaler.save'
-joblib.dump(scaler, scaler_filename)
+splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
+chunks = [chunk for doc in documents for chunk in splitter.split_text(doc)]
 
-# Step 11: Feature Importance Analysis Using SHAP
-explainer = shap.Explainer(model, normed_seqs)
-shap_values = explainer(normed_seqs)
+# Generate embeddings using SentenceTransformer
+embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
+embeddings = embedding_model.encode(chunks)
 
-# Visualize feature importance
-shap.summary_plot(shap_values, features)
+# Store embeddings in FAISS
+index = faiss.IndexFlatL2(embeddings.shape[1])
+index.add(np.array(embeddings))
 
+
+
+
+
+def retrieve_top_k(query, k=3):
+    query_embedding = embedding_model.encode([query])
+    _, indices = index.search(np.array(query_embedding), k)
+    return [chunks[i] for i in indices[0]]
+
+# Set up the model for text generation
+model = pipeline("text-generation", model="microsoft/phi-2")
+
+def generate_answer_with_rag(query):
+    # Retrieve the top-k most relevant chunks
+    context = "\n".join(retrieve_top_k(query))
+    
+    if not context:  # Check if relevant context is found
+        return "No relevant information found in the documents. Please try rephrasing your question or upload more documents."
+
+    prompt = f"Context:\n{context}\n\nQuestion: {query}\nAnswer:"
+    
+    # Generate answer using the model
+    response = model(prompt, max_length=200, num_return_sequences=1)
+    generated_answer = response[0]['generated_text']
+
+    # Post-processing validation step: Cross-check if the generated answer is consistent with the retrieved context
+    validation_result = validate_answer(query, generated_answer, context)
+    
+    if validation_result:
+        return generated_answer
+    else:
+        return "The generated answer seems inconsistent with the provided context. Please try again with a more specific question."
+
+def validate_answer(query, generated_answer, context):
+    # Simple validation: Check if generated answer contains parts of the context
+    # This can be improved with more sophisticated checks (e.g., NLP-based similarity checks)
+    for chunk in context.split("\n"):
+        if chunk.lower() in generated_answer.lower():
+            return True
+    return False
+
+
+
+question_widget = Text(description="Ask a Question:")
+display(question_widget)
+
+def on_question_submit(change):
+    question = question_widget.value
+    print(f"Question: {question}")
+    
+    answer = generate_answer_with_rag(question)
+    print(f"Answer: {answer}")
+    
+    # Allow user to re-ask if the answer is wrong
+    response = input("Is the answer correct? (yes/no): ")
+    if response.lower() == "no":
+        print("Feel free to rephrase the question or upload more documents for more context.")
+    
+question_widget.observe(on_question_submit, names="value")
