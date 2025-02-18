@@ -22,22 +22,20 @@ from ipywidgets import FileUpload, VBox, Output, Textarea, Button
 # ---------------------------------
 
 upload_widget = FileUpload(multiple=True)
+process_button = Button(description="Process Files", button_style='primary')
 output = Output()
 
 def save_uploaded_files(uploaded_files):
     """Save uploaded files to a directory."""
     saved_files = []
-    for file in uploaded_files:
-        filename = file["metadata"]["name"]
+    for filename, file_info in uploaded_files.items():
         filepath = f"/mnt/data/{filename}"
-
         with open(filepath, "wb") as f:
-            f.write(file["content"])
-
+            f.write(file_info["content"])
         saved_files.append(filepath)
     return saved_files
 
-display(VBox([upload_widget, output]))
+display(VBox([upload_widget, process_button, output]))
 
 # ---------------------------------
 # 2️⃣ Process & Extract Content from Files
@@ -118,14 +116,20 @@ def load_local_llm():
 vector_store = None
 llm = None
 
-def process_upload(change):
+def process_upload(b):
     """Handle document upload and processing."""
     global vector_store, llm
     with output:
         output.clear_output()
         print("🔄 Processing uploaded documents...")
 
-    file_paths = save_uploaded_files(upload_widget.value.values())
+    if not upload_widget.value:
+        with output:
+            output.clear_output()
+            print("⚠️ No files uploaded. Please upload supported files.")
+        return
+
+    file_paths = save_uploaded_files(upload_widget.value)
     documents = load_documents(file_paths)
 
     if not documents:
@@ -141,7 +145,7 @@ def process_upload(change):
         output.clear_output()
         print("✅ Documents processed successfully. You can now ask questions.")
 
-upload_widget.observe(process_upload, names="_counter")
+process_button.on_click(process_upload)
 
 # ---------------------------------
 # 4️⃣ Interactive Chatbot
