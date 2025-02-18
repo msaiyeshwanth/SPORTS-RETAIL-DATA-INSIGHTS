@@ -1,180 +1,135 @@
-!pip install transformers langchain sentence-transformers faiss-cpu pypdf python-docx python-pptx openpyxl email
-
-
-import PyPDF2
 import os
-import glob
 import faiss
-import numpy as np
+import pandas as pd
+import threading
+from time import sleep
+from IPython.display import display, clear_output
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from sentence_transformers import SentenceTransformer
-from transformers import pipeline
-from IPython.display import display
-from ipywidgets import FileUpload, Text
-import docx
-from pptx import Presentation
-import openpyxl
-from email import policy
-from email.parser import BytesParser
+from langchain.embeddings import HuggingFaceEmbeddings
+from langchain.vectorstores import FAISS
+from langchain.llms import CTransformers
+from langchain.chains import RetrievalQA
+from langchain.document_loaders import PyPDFLoader, Docx2txtLoader, TextLoader, CSVLoader
+from ipywidgets import FileUpload, VBox, Output, Textarea, Button
 
+# Global Variables
+vector_store = None
+llm = None
 
+# UI Elements
+upload_widget = FileUpload(multiple=True)
+chat_input = Textarea(placeholder="Ask a question...", layout={'width': '100%', 'height': '50px'})
+send_button = Button(description="Submit")
+output = Output()
 
-def extract_text_from_pdfs(pdf_folder):
-    text_data = []
-    pdf_files = glob.glob(os.path.join(pdf_folder, "*.pdf"))
-    for pdf_file in pdf_files:
-        with open(pdf_file, "rb") as file:
-            reader = PyPDF2.PdfReader(file)
-            text = "\n".join([page.extract_text() for page in reader.pages if page.extract_text()])
-            text_data.append(text)
-    return text_data
+# Loading Animation
+loading = False
 
-def extract_text_from_word(doc_folder):
-    text_data = []
-    doc_files = glob.glob(os.path.join(doc_folder, "*.docx"))
-    for doc_file in doc_files:
-        doc = docx.Document(doc_file)
-        text = "\n".join([para.text for para in doc.paragraphs])
-        text_data.append(text)
-    return text_data
+def show_loading():
+    global loading
+    with output:
+        while loading:
+            clear_output(wait=True)
+            print("⏳ Processing your question...")
+            sleep(0.5)
 
-def extract_text_from_txt(txt_folder):
-    text_data = []
-    txt_files = glob.glob(os.path.join(txt_folder, "*.txt"))
-    for txt_file in txt_files:
-        with open(txt_file, 'r') as file:
-            text = file.read()
-            text_data.append(text)
-    return text_data
-
-def extract_text_from_ppt(ppt_folder):
-    text_data = []
-    ppt_files = glob.glob(os.path.join(ppt_folder, "*.pptx"))
-    for ppt_file in ppt_files:
-        presentation = Presentation(ppt_file)
-        text = "\n".join([slide.shapes.text for slide in presentation.slides if hasattr(slide.shapes, 'text')])
-        text_data.append(text)
-    return text_data
-
-def extract_text_from_excel(excel_folder):
-    text_data = []
-    excel_files = glob.glob(os.path.join(excel_folder, "*.xlsx"))
-    for excel_file in excel_files:
-        wb = openpyxl.load_workbook(excel_file)
-        sheet = wb.active
-        text = "\n".join([str(cell.value) for row in sheet.iter_rows() for cell in row])
-        text_data.append(text)
-    return text_data
-
-def extract_text_from_emails(email_folder):
-    text_data = []
-    email_files = glob.glob(os.path.join(email_folder, "*.eml"))
-    for email_file in email_files:
-        with open(email_file, 'rb') as f:
-            msg = BytesParser(policy=policy.default).parse(f)
-            text = msg.get_body(preferencelist=('plain')).get_payload()
-            text_data.append(text)
-    return text_data
-
-
-
-
-
-upload_widget = FileUpload(accept=".pdf,.docx,.txt,.pptx,.xlsx,.eml", multiple=True)
-display(upload_widget)
-
-def process_uploaded_files(upload_widget):
-    # Save uploaded files
-    file_folder = "uploaded_files"
-    os.makedirs(file_folder, exist_ok=True)
+def load_documents(uploaded_files):
+    docs = []
+    for file in uploaded_files:
+        filename = file["metadata"]["name"]
+        filepath = f"/mnt/data/{filename}"
+        
+        with open(filepath, "wb") as f:
+            f.write(file["content"])
+        
+        ext = filename.split(".")[-1].lower()
+        
+        if ext == "pdf":
+            loader = PyPDFLoader(filepath)
+        elif ext in ["docx", "doc"]:
+            loader = Docx2txtLoader(filepath)
+        elif ext == "txt":
+            loader = TextLoader(filepath)
+        elif ext in ["csv", "xlsx"]:
+            df = pd.read_excel(filepath) if ext == "xlsx" else pd.read_csv(filepath)
+            text_data = "\n".join(df.astype(str).apply(lambda row: " | ".join(row), axis=1))
+            docs.append(text_data)
+            continue
+        else:
+            print(f"Unsupported file format: {filename}")
+            continue
+        
+        docs.extend(loader.load())
     
-    for filename, file in upload_widget.value.items():
-        with open(os.path.join(file_folder, filename), 'wb') as f:
-            f.write(file['content'])
+    return docs
+
+def create_vector_store(documents):
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
+    doc_chunks = text_splitter.split_documents(documents)
+
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
+    vector_store = FAISS.from_documents(doc_chunks, embeddings)
     
-    # Extract text from different file types
-    pdf_text = extract_text_from_pdfs(file_folder)
-    word_text = extract_text_from_word(file_folder)
-    txt_text = extract_text_from_txt(file_folder)
-    ppt_text = extract_text_from_ppt(file_folder)
-    excel_text = extract_text_from_excel(file_folder)
-    email_text = extract_text_from_emails(file_folder)
+    return vector_store
+
+def load_local_llm():
+    return CTransformers(
+        model="TheBloke/Mistral-7B-Instruct-GGUF",
+        model_type="mistral",
+        config={"max_new_tokens": 500, "temperature": 0.3}
+    )
+
+def generate_answer(vector_store, llm, question):
+    retriever = vector_store.as_retriever(search_kwargs={"k": 5})
+    qa_chain = RetrievalQA.from_chain_type(llm, retriever=retriever)
     
-    # Combine all extracted texts
-    all_text = pdf_text + word_text + txt_text + ppt_text + excel_text + email_text
-    return all_text
-
-documents = process_uploaded_files(upload_widget)
-
-
-
-splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100)
-chunks = [chunk for doc in documents for chunk in splitter.split_text(doc)]
-
-# Generate embeddings using SentenceTransformer
-embedding_model = SentenceTransformer("all-MiniLM-L6-v2")
-embeddings = embedding_model.encode(chunks)
-
-# Store embeddings in FAISS
-index = faiss.IndexFlatL2(embeddings.shape[1])
-index.add(np.array(embeddings))
-
-
-
-
-
-def retrieve_top_k(query, k=3):
-    query_embedding = embedding_model.encode([query])
-    _, indices = index.search(np.array(query_embedding), k)
-    return [chunks[i] for i in indices[0]]
-
-# Set up the model for text generation
-model = pipeline("text-generation", model="microsoft/phi-2")
-
-def generate_answer_with_rag(query):
-    # Retrieve the top-k most relevant chunks
-    context = "\n".join(retrieve_top_k(query))
+    result = qa_chain({"query": question})
     
-    if not context:  # Check if relevant context is found
-        return "No relevant information found in the documents. Please try rephrasing your question or upload more documents."
+    return result["result"]
 
-    prompt = f"Context:\n{context}\n\nQuestion: {query}\nAnswer:"
+def process_upload(change):
+    global vector_store, llm
+    with output:
+        output.clear_output()
+        print("🔄 Processing documents...")
+
+        documents = load_documents(upload_widget.value.values())
+        vector_store = create_vector_store(documents)
+
+        llm = load_local_llm()
+        print("✅ Documents processed successfully. You can now ask questions.")
+
+upload_widget.observe(process_upload, names="_counter")
+
+def on_submit(b):
+    global loading
+    if vector_store is None:
+        with output:
+            output.clear_output()
+            print("⚠️ Please upload documents first.")
+        return
     
-    # Generate answer using the model
-    response = model(prompt, max_length=200, num_return_sequences=1)
-    generated_answer = response[0]['generated_text']
+    question = chat_input.value.strip()
+    if not question:
+        return
 
-    # Post-processing validation step: Cross-check if the generated answer is consistent with the retrieved context
-    validation_result = validate_answer(query, generated_answer, context)
-    
-    if validation_result:
-        return generated_answer
-    else:
-        return "The generated answer seems inconsistent with the provided context. Please try again with a more specific question."
+    loading = True
+    loading_thread = threading.Thread(target=show_loading)
+    loading_thread.start()
 
-def validate_answer(query, generated_answer, context):
-    # Simple validation: Check if generated answer contains parts of the context
-    # This can be improved with more sophisticated checks (e.g., NLP-based similarity checks)
-    for chunk in context.split("\n"):
-        if chunk.lower() in generated_answer.lower():
-            return True
-    return False
+    answer = generate_answer(vector_store, llm, question)
 
+    loading = False
+    loading_thread.join()
 
+    with output:
+        clear_output(wait=True)
+        print(f"**You:** {question}\n")
+        print(f"**AI:** {answer}")
 
-question_widget = Text(description="Ask a Question:")
-display(question_widget)
+    chat_input.value = ""
 
-def on_question_submit(change):
-    question = question_widget.value
-    print(f"Question: {question}")
-    
-    answer = generate_answer_with_rag(question)
-    print(f"Answer: {answer}")
-    
-    # Allow user to re-ask if the answer is wrong
-    response = input("Is the answer correct? (yes/no): ")
-    if response.lower() == "no":
-        print("Feel free to rephrase the question or upload more documents for more context.")
-    
-question_widget.observe(on_question_submit, names="value")
+send_button.on_click(on_submit)
+
+# Display Chatbot UI
+display(VBox([upload_widget, chat_input, send_button, output]))
